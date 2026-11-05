@@ -1,37 +1,31 @@
-# Render "Blueprint": creates the KIRO API server from this repository.
-# The database is Neon (project "kiro", branch "production"), not a Render database.
-# NOT tested by me (it needs your Render account). Check Render's current plans before you deploy:
-#  - free web services go to sleep when idle, so the 10 PM WhatsApp report can be missed;
-#    for a real shop choose a paid plan.
-# Tests never use the production branch: they use the Neon branch "qa" (qa/.env, TEST_DATABASE_URL).
+# Render "Blueprint" for the KIRO server side. Create it in Render from THIS repository (kiro-infrastructure).
+# Database: Neon project "kiro", branch "production" (not a Render database). Tests never use production.
+# NOT deployed yet; free web services sleep when idle, so choose a paid plan for real shops.
 services:
   - type: web
     name: kiro-api
     runtime: node
     plan: free              # change to a paid plan so it never sleeps
-    rootDir: server/node
-    buildCommand: npm install
+    repo: https://github.com/kirotick/kiro-backend
+    branch: main
+    rootDir: api
+    # Fetch the schema at the version this API is tested with, then install.
+    buildCommand: git clone --depth 1 --branch "$(cat database-version.txt)" https://github.com/kirotick/kiro-database ../../kiro-database && npm ci
     startCommand: npm run migrate && npm start
     healthCheckPath: /health
     envVars:
       - key: NODE_VERSION
-        value: "20"
+        value: "22"
       - key: NODE_ENV
         value: production
+      - key: KIRO_DATABASE_DIR
+        value: ../../kiro-database
       - key: DATABASE_URL
-        sync: false             # you paste it: Neon console > project kiro > branch production > Connect (pooled, sslmode=verify-full)
-      - key: PG_POOL_MAX
-        value: "20"             # measured: 100 users, reads p95 3.0 s with 10 connections, 1.3 s with 20 (qa/load)
+        sync: false             # Neon console > kiro > production > Connect (pooled, sslmode=verify-full)
       - key: JWT_SECRET
-        generateValue: true     # Render makes a long random value for you
-      - key: PHONEPE_KEK
-        sync: false             # you enter it: openssl rand -base64 32
-      - key: PHONEPE_BASE_URL
-        sync: false             # from PhonePe's documentation for your account
-      - key: PUBLIC_BASE_URL
-        sync: false             # your API address, e.g. https://kiro-api.onrender.com (no slash at the end)
+        sync: false             # same value as kiro-payments; generate once: openssl rand -base64 48
       - key: CORS_ORIGINS
-        sync: false             # your admin website address(es), comma separated; may stay empty
+        sync: false
       - key: AI_API_KEY
         sync: false             # optional
       - key: AI_MODEL
@@ -39,6 +33,30 @@ services:
       - key: WA_TOKEN
         sync: false             # optional (nightly WhatsApp report)
       - key: WA_PHONE_NUMBER_ID
-        sync: false             # optional
+        sync: false
       - key: WA_TEMPLATE
-        sync: false             # optional
+        sync: false
+
+  - type: web
+    name: kiro-pay
+    runtime: node
+    plan: free
+    repo: https://github.com/kirotick/kiro-payments
+    branch: main
+    rootDir: service/node
+    buildCommand: git clone --depth 1 --branch "$(cat database-version.txt)" https://github.com/kirotick/kiro-database ../../../kiro-database && npm ci
+    startCommand: npm run migrate && npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: NODE_ENV
+        value: production
+      - key: KIRO_DATABASE_DIR
+        value: ../../../kiro-database
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_SECRET
+        sync: false             # must equal kiro-api's JWT_SECRET (tokens are issued there)
+      # PAYMENTS_ENABLED is deliberately absent: payments stay disabled until approved (ADR-0004).
+      # When approved, also set PHONEPE_KEK, PHONEPE_BASE_URL, PUBLIC_BASE_URL.
